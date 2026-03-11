@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="TripScan" />
+  <title>TripScan</title>
+  <!-- PWA icon hint for iPhone home screen -->
+  <link rel="apple-touch-icon" href="https://fav.farm/✈️" />
+  <style>
+    body { margin: 0; padding: 0; }
+    #root { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + Babel (no build step needed) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+
+const CARD_ICONS = {
+  flight: "✈️", hotel: "🏨", car: "🚗", train: "🚆",
+  cruise: "🚢", activity: "🎟️", restaurant: "🍽️", other: "📋",
+};
+const STATUS_COLORS = {
+  confirmed: "#059669", cancelled: "#dc2626", pending: "#d97706", completed: "#9ca3af",
+};
+const STATUS_BG = {
+  confirmed: "#ecfdf5", cancelled: "#fef2f2", pending: "#fffbeb", completed: "#f9fafb",
+};
+
+function formatDate(d) {
+  if (!d) return "";
+  return new Date(d + "T00:00:00").toLocaleDateString("en-AU", { month: "short", day: "numeric", year: "numeric" });
+}
+function formatDateShort(d) {
+  if (!d) return "";
+  return new Date(d + "T00:00:00").toLocaleDateString("en-AU", { month: "short", day: "numeric" });
+}
+function getDaysUntil(d) {
+  const now = new Date(); now.setHours(0,0,0,0);
+  return Math.ceil((new Date(d + "T00:00:00") - now) / 86400000);
+}
+
+// ── API Key Modal ─────────────────────────────────────────────────────────────
+function ApiKeyModal({ onSave, existing }) {
+  const [val, setVal] = useState(existing || "");
+  const [show, setShow] = useState(false);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: 420, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 24 }}>🔑</span>
+          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: "#111827" }}>
+            {existing ? "Update API Key" : "Welcome to TripScan"}
+          </div>
+        </div>
+        <p style={{ color: "#6b7280", fontSize: 13, lineHeight: 1.6, marginBottom: 20 }}>
+          TripScan uses the Anthropic API to scan your Gmail for travel bookings.
+          Enter your API key below — it's saved only in your browser's local storage and never sent anywhere except Anthropic.
+        </p>
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer"
+          style={{ display: "inline-block", fontSize: 12, color: "#3b82f6", marginBottom: 16, textDecoration: "none" }}>
+          → Get your API key from console.anthropic.com
+        </a>
+        <div style={{ position: "relative", marginBottom: 20 }}>
+          <input
+            type={show ? "text" : "password"}
+            value={val}
+            onChange={e => setVal(e.target.value)}
+            placeholder="sk-ant-..."
+            style={{ width: "100%", padding: "10px 40px 10px 12px", border: "1.5px solid #e5e7eb", borderRadius: 10, fontSize: 13, fontFamily: "monospace", outline: "none", color: "#111827" }}
+          />
+          <button onClick={() => setShow(s => !s)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16 }}>
+            {show ? "🙈" : "👁"}
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {existing && (
+            <button onClick={() => onSave(existing)} style={{ flex: 1, padding: "10px", background: "#f9fafb", border: "1.5px solid #e5e7eb", borderRadius: 10, fontSize: 13, cursor: "pointer", color: "#6b7280", fontWeight: 600 }}>
+              Cancel
+            </button>
+          )}
+          <button
+            onClick={() => val.trim().startsWith("sk-") && onSave(val.trim())}
+            disabled={!val.trim().startsWith("sk-")}
+            style={{ flex: 2, padding: "10px", background: val.trim().startsWith("sk-") ? "#3b82f6" : "#e5e7eb", border: "none", borderRadius: 10, fontSize: 13, cursor: val.trim().startsWith("sk-") ? "pointer" : "not-allowed", color: val.trim().startsWith("sk-") ? "#fff" : "#9ca3af", fontWeight: 700, boxShadow: val.trim().startsWith("sk-") ? "0 2px 8px rgba(59,130,246,0.3)" : "none" }}>
+            Save & Continue
+          </button>
+        </div>
+        <p style={{ fontSize: 11, color: "#d1d5db", marginTop: 14, textAlign: "center" }}>
+          Your key is stored only in this browser. Never shared with anyone except Anthropic.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Trip Card ──────────────────────────────────────────────────────────────────
+function TripCard({ trip, isActive, onClick }) {
+  const daysUntil = getDaysUntil(trip.startDate);
+  const isPast = getDaysUntil(trip.endDate) < 0;
+  return (
+    <div onClick={onClick} style={{
+      background: isActive ? "#eff6ff" : "#fff",
+      border: isActive ? "1.5px solid #3b82f6" : "1.5px solid #e5e7eb",
+      borderRadius: 12, padding: "14px 15px", cursor: "pointer", marginBottom: 8,
+      transition: "all 0.15s", opacity: isPast ? 0.6 : 1,
+      boxShadow: isActive ? "0 2px 8px rgba(59,130,246,0.12)" : "0 1px 3px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ fontSize: 16 }}>{trip.emoji || "🌍"}</span>
+            <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 15, color: "#111827", fontWeight: 700 }}>{trip.name}</span>
+          </div>
+          <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 3, paddingLeft: 23 }}>
+            {formatDateShort(trip.startDate)} — {formatDateShort(trip.endDate)}
+          </div>
+          {trip.travelers && trip.travelers.length > 0 && (
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 3, paddingLeft: 23 }}>
+              👤 {trip.travelers.join(", ")}
+            </div>
+          )}
+        </div>
+        {!isPast && daysUntil >= 0 ? (
+          <div style={{ background: daysUntil <= 14 ? "#dcfce7" : "#f3f4f6", border: `1px solid ${daysUntil <= 14 ? "#86efac" : "#e5e7eb"}`, borderRadius: 20, padding: "2px 9px", fontSize: 11, color: daysUntil <= 14 ? "#16a34a" : "#6b7280", flexShrink: 0, fontWeight: 600 }}>
+            {daysUntil === 0 ? "Today" : daysUntil === 1 ? "Tomorrow" : `${daysUntil}d`}
+          </div>
+        ) : isPast ? (
+          <div style={{ background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 20, padding: "2px 9px", fontSize: 11, color: "#9ca3af" }}>Past</div>
+        ) : null}
+      </div>
+      <div style={{ display: "flex", gap: 4, marginTop: 9, paddingLeft: 23, flexWrap: "wrap", alignItems: "center" }}>
+        {[...new Set((trip.bookings || []).map(b => b.type))].map(type => (
+          <span key={type} style={{ fontSize: 14 }}>{CARD_ICONS[type] || "📋"}</span>
+        ))}
+        <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 3 }}>{(trip.bookings || []).length} booking{(trip.bookings || []).length !== 1 ? "s" : ""}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Booking Card ───────────────────────────────────────────────────────────────
+function BookingCard({ booking }) {
+  const sc = STATUS_COLORS[booking.status] || "#6b7280";
+  const sb = STATUS_BG[booking.status] || "#f9fafb";
+  return (
+    <div style={{ background: "#fff", border: "1.5px solid #e5e7eb", borderRadius: 12, padding: "15px 17px", marginBottom: 10, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flex: 1 }}>
+          <span style={{ fontSize: 26, lineHeight: 1.2, flexShrink: 0 }}>{CARD_ICONS[booking.type] || "📋"}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: "#111827", fontWeight: 700, fontSize: 14 }}>{booking.title}</div>
+            <div style={{ color: "#6b7280", fontSize: 12, marginTop: 2 }}>{booking.provider}</div>
+            {booking.travelers && booking.travelers.length > 0 && (
+              <div style={{ color: "#6b7280", fontSize: 12, marginTop: 2 }}>👤 {booking.travelers.join(", ")}</div>
+            )}
+            {booking.from && booking.to && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <div style={{ textAlign: "center", minWidth: 90 }}>
+                    {booking.time && <div style={{ fontSize: 17, fontWeight: 700, color: "#111827", letterSpacing: -0.5 }}>{booking.time}</div>}
+                    <div style={{ fontSize: 12, color: "#374151", fontWeight: 600 }}>{booking.from}</div>
+                  </div>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 4, padding: "0 8px" }}>
+                    <div style={{ flex: 1, height: 1, background: "#d1d5db" }} />
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>✈</span>
+                    <div style={{ flex: 1, height: 1, background: "#d1d5db" }} />
+                  </div>
+                  <div style={{ textAlign: "center", minWidth: 90 }}>
+                    {booking.endTime && <div style={{ fontSize: 17, fontWeight: 700, color: "#111827", letterSpacing: -0.5 }}>{booking.endTime}</div>}
+                    <div style={{ fontSize: 12, color: "#374151", fontWeight: 600 }}>{booking.to}</div>
+                  </div>
+                </div>
+                {booking.endDate && booking.endDate !== booking.date && (
+                  <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "right", marginTop: 2 }}>Arrives {formatDateShort(booking.endDate)}</div>
+                )}
+              </div>
+            )}
+            {booking.description && <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>{booking.description}</div>}
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ display: "inline-block", background: sb, color: sc, border: `1px solid ${sc}44`, borderRadius: 20, padding: "3px 9px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>{booking.status}</div>
+          {booking.price && <div style={{ color: "#059669", fontSize: 14, marginTop: 6, fontWeight: 700 }}>{booking.price}</div>}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 14, marginTop: 10, flexWrap: "wrap", borderTop: "1px solid #f3f4f6", paddingTop: 10 }}>
+        {booking.date && <div style={{ fontSize: 12, color: "#6b7280" }}>📅 {formatDate(booking.date)}{booking.time && !booking.from ? ` · ${booking.time}` : ""}{booking.endDate && booking.endDate !== booking.date && !booking.from ? ` → ${formatDate(booking.endDate)}${booking.endTime ? ` · ${booking.endTime}` : ""}` : ""}</div>}
+        {booking.confirmationNumber && <div style={{ fontSize: 12, color: "#6b7280" }}>🔖 <span style={{ color: "#374151", fontFamily: "monospace", fontWeight: 600 }}>{booking.confirmationNumber}</span></div>}
+      </div>
+    </div>
+  );
+}
+
+const JSON_SCHEMA = `{
+  "emailsScanned": <number>,
+  "trips": [{
+    "id": "slug", "name": "City/Trip name", "emoji": "🇫🇷",
+    "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD",
+    "travelers": ["First Last"],
+    "bookings": [{
+      "id": "slug", "type": "flight|hotel|car|train|cruise|activity|restaurant|other",
+      "title": "Short title", "description": "Details",
+      "travelers": ["First Last"],
+      "confirmationNumber": "ABC123 or null", "date": "YYYY-MM-DD",
+      "time": "HH:MM or null", "endDate": "YYYY-MM-DD or null", "endTime": "HH:MM or null",
+      "status": "confirmed|cancelled|pending", "provider": "Company",
+      "from": "City (CODE) or null", "to": "City (CODE) or null", "price": "$X or null"
+    }]
+  }]
+}`;
+
+// ── Main App ───────────────────────────────────────────────────────────────────
+function TripScan() {
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("tripscan_apikey") || "");
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [trips, setTrips] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [status, setStatus] = useState("idle");
+  const [statusMsg, setStatusMsg] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
+  const [filter, setFilter] = useState("upcoming");
+  const [scanRange, setScanRange] = useState("180");
+
+  // Show modal on first load if no key
+  useEffect(() => {
+    if (!apiKey) setShowKeyModal(true);
+  }, []);
+
+  function saveApiKey(key) {
+    localStorage.setItem("tripscan_apikey", key);
+    setApiKey(key);
+    setShowKeyModal(false);
+  }
+
+  async function scanEmails() {
+    if (!apiKey) { setShowKeyModal(true); return; }
+    setStatus("scanning");
+    setStatusMsg("Step 1/2 — Scanning Gmail for travel emails...");
+    setErrorDetail("");
+    setTrips([]);
+
+    const after = new Date();
+    after.setDate(after.getDate() - parseInt(scanRange));
+    const afterStr = after.toISOString().split("T")[0].replace(/-/g, "/");
+    const today = new Date().toISOString().split("T")[0];
+
+    try {
+      const turn1 = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 8000,
+          system: `You are a travel booking scanner. Search the user's Gmail for travel booking confirmation emails (flights, hotels, car rentals, trains, cruises, activities).
+Search query: subject:(booking OR confirmation OR itinerary OR reservation OR "flight confirmation" OR "hotel confirmation" OR "car rental" OR "e-ticket") after:${afterStr}
+Use maxResults 20. Read the full body of up to 10 of the most relevant travel emails.
+For each booking found, extract: traveler names, dates, confirmation numbers, routes, providers, prices, flight times, seat/room details.
+Summarise all bookings clearly.`,
+          messages: [{ role: "user", content: "Scan my Gmail and summarise all travel bookings you find, including traveler names and flight times." }],
+          mcp_servers: [{ type: "url", url: "https://gmail.mcp.claude.com/mcp", name: "gmail-mcp" }],
+        }),
+      });
+
+      if (!turn1.ok) {
+        const errText = await turn1.text();
+        if (turn1.status === 401) throw new Error("Invalid API key. Click the ⚙️ settings button to update it.");
+        throw new Error(`API error ${turn1.status}: ${errText}`);
+      }
+      const data1 = await turn1.json();
+      if (data1.error) throw new Error(data1.error.message);
+
+      const summary = (data1.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+      if (!summary) throw new Error("No summary returned. stop_reason: " + data1.stop_reason);
+
+      setStatusMsg("Step 2/2 — Structuring bookings...");
+
+      const turn2 = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4000,
+          system: `You convert travel booking summaries into structured JSON.
+Today is ${today}.
+Respond with ONLY a valid JSON object — no markdown, no backticks, no explanation.
+Include traveler names and all flight times (departure/arrival).
+Schema:
+${JSON_SCHEMA}`,
+          messages: [{ role: "user", content: `Convert this to JSON:\n\n${summary}` }],
+        }),
+      });
+
+      if (!turn2.ok) throw new Error(`API error ${turn2.status}: ${await turn2.text()}`);
+      const data2 = await turn2.json();
+      if (data2.error) throw new Error(data2.error.message);
+
+      const rawText = (data2.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+      const clean = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
+
+      let parsed;
+      try { parsed = JSON.parse(clean); }
+      catch (e) { throw new Error("JSON parse failed: " + clean.slice(0, 400)); }
+
+      const sortedTrips = (parsed.trips || []).sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+      setTrips(sortedTrips);
+      const firstUpcoming = sortedTrips.find(t => getDaysUntil(t.endDate) >= 0);
+      setSelectedId(firstUpcoming?.id || sortedTrips[sortedTrips.length - 1]?.id || null);
+      setStatus("done");
+      setStatusMsg(`Found ${sortedTrips.length} trip${sortedTrips.length !== 1 ? "s" : ""} from ${parsed.emailsScanned || "your"} emails.`);
+    } catch (err) {
+      setStatus("error");
+      setStatusMsg("Scan failed.");
+      setErrorDetail(err.message);
+    }
+  }
+
+  const now = new Date(); now.setHours(0,0,0,0);
+  const filtered = trips.filter(t => {
+    const end = new Date(t.endDate + "T00:00:00");
+    if (filter === "upcoming") return end >= now;
+    if (filter === "past") return end < now;
+    return true;
+  });
+  const active = trips.find(t => t.id === selectedId);
+  const nextTrip = trips.filter(t => getDaysUntil(t.startDate) >= 0).sort((a, b) => getDaysUntil(a.startDate) - getDaysUntil(b.startDate))[0];
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#f8fafc", fontFamily: "'DM Sans', sans-serif", color: "#111827" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+
+      {/* API Key Modal */}
+      {showKeyModal && <ApiKeyModal onSave={saveApiKey} existing={apiKey} />}
+
+      {/* Header */}
+      <div style={{ borderBottom: "1.5px solid #e5e7eb", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>✈️</span>
+          <div>
+            <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: "#111827" }}>TripScan</div>
+            <div style={{ fontSize: 10, color: "#9ca3af", letterSpacing: 1.5, textTransform: "uppercase" }}>Travel Dashboard</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {nextTrip && status === "done" && (
+            <div style={{ background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 10, padding: "6px 12px", textAlign: "right" }}>
+              <div style={{ fontSize: 10, color: "#16a34a", letterSpacing: 1, textTransform: "uppercase", marginBottom: 1 }}>Next Trip</div>
+              <div style={{ fontSize: 13, color: "#111827", fontWeight: 700 }}>{nextTrip.emoji} {nextTrip.name}</div>
+              <div style={{ fontSize: 11, color: "#6b7280" }}>{getDaysUntil(nextTrip.startDate) === 0 ? "Today!" : `in ${getDaysUntil(nextTrip.startDate)} days`}</div>
+            </div>
+          )}
+          <select value={scanRange} onChange={e => setScanRange(e.target.value)} disabled={status === "scanning"} style={{ background: "#fff", border: "1.5px solid #e5e7eb", borderRadius: 8, padding: "7px 9px", color: "#374151", fontSize: 12, cursor: "pointer" }}>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="180">Last 6 months</option>
+            <option value="365">Last year</option>
+          </select>
+          <button onClick={scanEmails} disabled={status === "scanning"} style={{ background: status === "scanning" ? "#eff6ff" : "#3b82f6", border: "none", color: status === "scanning" ? "#3b82f6" : "#fff", borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: status === "scanning" ? "not-allowed" : "pointer", boxShadow: status === "scanning" ? "none" : "0 2px 6px rgba(59,130,246,0.3)" }}>
+            {status === "scanning" ? <><span style={{ display: "inline-block", animation: "spin 1s linear infinite", marginRight: 5 }}>⟳</span>Scanning...</> : "🔍 Scan"}
+          </button>
+          {/* Settings / API key button */}
+          <button onClick={() => setShowKeyModal(true)} title="API Key Settings" style={{ background: "#f9fafb", border: "1.5px solid #e5e7eb", borderRadius: 10, padding: "8px 10px", fontSize: 15, cursor: "pointer", color: apiKey ? "#6b7280" : "#dc2626" }}>
+            ⚙️
+          </button>
+        </div>
+      </div>
+
+      {/* Status bar */}
+      {statusMsg && (
+        <div style={{ padding: "8px 20px", background: status === "error" ? "#fef2f2" : "#f0fdf4", borderBottom: "1px solid #e5e7eb", fontSize: 12, color: status === "error" ? "#dc2626" : "#16a34a" }}>
+          {status === "scanning" && <span style={{ display: "inline-block", animation: "spin 1s linear infinite", marginRight: 6 }}>⟳</span>}
+          {statusMsg}
+          {errorDetail && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4, fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{errorDetail}</div>}
+        </div>
+      )}
+
+      {/* Empty / onboarding state */}
+      {trips.length === 0 && status !== "scanning" && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "65vh", gap: 14, padding: "0 20px" }}>
+          <div style={{ fontSize: 52 }}>🗺️</div>
+          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, color: "#111827", fontWeight: 700, textAlign: "center" }}>Your trips, all in one place</div>
+          <div style={{ color: "#6b7280", fontSize: 14, maxWidth: 360, textAlign: "center", lineHeight: 1.7 }}>
+            TripScan scans your Gmail for flight, hotel, car and activity confirmations and organises them into trips.
+          </div>
+          {!apiKey && (
+            <button onClick={() => setShowKeyModal(true)} style={{ background: "#fef9c3", border: "1.5px solid #fde047", color: "#854d0e", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              🔑 Set your Anthropic API key first
+            </button>
+          )}
+          <button onClick={scanEmails} style={{ background: "#3b82f6", border: "none", color: "#fff", borderRadius: 12, padding: "13px 28px", fontSize: 15, fontWeight: 600, cursor: "pointer", boxShadow: "0 4px 12px rgba(59,130,246,0.3)" }}>
+            ✈️ Scan My Emails
+          </button>
+        </div>
+      )}
+
+      {/* Main layout */}
+      {(trips.length > 0 || status === "scanning") && (
+        <div style={{ display: "flex", height: "calc(100vh - 57px)" }}>
+          {/* Sidebar */}
+          <div style={{ width: 265, flexShrink: 0, borderRight: "1.5px solid #e5e7eb", padding: "14px 12px", overflowY: "auto", background: "#fff" }}>
+            <div style={{ display: "flex", gap: 3, marginBottom: 12, background: "#f3f4f6", borderRadius: 10, padding: 3 }}>
+              {["upcoming","past","all"].map(f => (
+                <button key={f} onClick={() => setFilter(f)} style={{ flex: 1, padding: "5px 0", borderRadius: 8, border: "none", background: filter === f ? "#fff" : "transparent", color: filter === f ? "#111827" : "#9ca3af", fontSize: 12, cursor: "pointer", fontWeight: filter === f ? 600 : 400, textTransform: "capitalize", transition: "all 0.15s", boxShadow: filter === f ? "0 1px 3px rgba(0,0,0,0.08)" : "none" }}>{f}</button>
+              ))}
+            </div>
+            {filtered.map(trip => (
+              <TripCard key={trip.id} trip={trip} isActive={selectedId === trip.id} onClick={() => setSelectedId(trip.id)} />
+            ))}
+            {filtered.length === 0 && <div style={{ color: "#9ca3af", fontSize: 13, textAlign: "center", padding: "30px 0" }}>No trips</div>}
+          </div>
+
+          {/* Detail panel */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", background: "#f8fafc" }}>
+            {active ? (
+              <>
+                <div style={{ marginBottom: 22, display: "flex", alignItems: "center", gap: 14 }}>
+                  <span style={{ fontSize: 36 }}>{active.emoji || "🌍"}</span>
+                  <div>
+                    <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 30, fontWeight: 700, color: "#111827", lineHeight: 1 }}>{active.name}</div>
+                    <div style={{ color: "#6b7280", fontSize: 13, marginTop: 5 }}>
+                      {formatDate(active.startDate)} — {formatDate(active.endDate)}
+                      <span style={{ margin: "0 8px", color: "#d1d5db" }}>·</span>
+                      {(active.bookings || []).length} booking{(active.bookings || []).length !== 1 ? "s" : ""}
+                      {active.travelers && active.travelers.length > 0 && (
+                        <><span style={{ margin: "0 8px", color: "#d1d5db" }}>·</span>👤 {active.travelers.join(", ")}</>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {["flight","train","hotel","car","activity","restaurant","cruise","other"].map(type => {
+                  const typed = (active.bookings || []).filter(b => b.type === type);
+                  if (!typed.length) return null;
+                  const label = type === "car" ? "Car Rental" : type.charAt(0).toUpperCase() + type.slice(1);
+                  return (
+                    <div key={type} style={{ marginBottom: 26 }}>
+                      <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10, display: "flex", alignItems: "center", gap: 7, borderBottom: "1.5px solid #e5e7eb", paddingBottom: 8 }}>
+                        <span style={{ fontSize: 15 }}>{CARD_ICONS[type]}</span>{label}{typed.length > 1 ? "s" : ""}
+                      </div>
+                      {typed.map(b => <BookingCard key={b.id} booking={b} />)}
+                    </div>
+                  );
+                })}
+              </>
+            ) : trips.length > 0 ? (
+              <div style={{ color: "#9ca3af", padding: "50px 0", textAlign: "center" }}>Select a trip</div>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<TripScan />);
+  </script>
+</body>
+</html>
